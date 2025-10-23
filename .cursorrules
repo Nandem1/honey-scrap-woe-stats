@@ -1,0 +1,416 @@
+# WoE Dashboard - Cursor IDE Rules
+
+## Project Overview
+Real-time War of Emperium (WoE) ranking dashboard built with Next.js. Displays guild lineups, class compositions, and player statistics with live updates every 5-10 seconds.
+
+## Tech Stack
+- **Framework**: Next.js 14+ (App Router, TypeScript)
+- **UI Components**: shadcn/ui (Radix UI primitives)
+- **Styling**: Tailwind CSS
+- **Data Fetching**: SWR (real-time polling)
+- **Animations**: @formkit/auto-animate (lightweight list animations)
+- **Type Safety**: TypeScript (strict mode)
+- **Package Manager**: npm
+
+## Core Principles
+
+### SOLID
+- **Single Responsibility**: Each component has ONE purpose (GuildLineup, PlayerCard, DamageDealers)
+- **Open/Closed**: Components should be extensible via props, not modification
+- **Liskov Substitution**: All Player components should work interchangeably
+- **Interface Segregation**: Create specific hooks (useGuildData, usePlayerStats), not monolithic ones
+- **Dependency Inversion**: Depend on abstractions (types/interfaces), not concrete implementations
+
+### DRY (Don't Repeat Yourself)
+- Extract repeated logic into custom hooks (`useRankingData`, `useGuildStats`)
+- Create reusable UI components for repeated patterns
+- Centralize data transformations in `lib/utils` or `lib/calculations`
+- Use TypeScript interfaces to avoid duplicating type definitions
+
+### KISS (Keep It Simple, Stupid)
+- Avoid over-engineering: Don't add state management (Zustand/Redux) unless complexity demands it
+- Use native JavaScript methods (filter, map, reduce) over libraries when possible
+- Keep component hierarchy shallow (max 3 levels deep)
+- Prefer composition over complex prop drilling
+
+## Code Style Guidelines
+
+### TypeScript
+```typescript
+// ✅ DO: Use strict typing
+interface Player {
+  name: string
+  class: PlayerClass
+  kills: number // Parse strings to numbers early
+  deaths: number
+  score: number
+}
+
+type PlayerClass = 
+  | 'Creator' 
+  | 'Stalker' 
+  | 'Paladin' 
+  | 'Professor'
+  // ... other classes
+
+// ❌ DON'T: Use 'any' or loose types
+interface Player {
+  [key: string]: any
+}
+```
+
+### Component Structure
+```typescript
+// ✅ DO: Follow this structure
+'use client' // Only if using hooks
+
+import { type ComponentProps } from 'react'
+import { useAutoAnimate } from '@formkit/auto-animate/react'
+
+interface GuildLineupProps {
+  guildName: string
+  highlightDealers?: boolean
+}
+
+export function GuildLineup({ guildName, highlightDealers = false }: GuildLineupProps) {
+  // 1. Hooks
+  const [parent] = useAutoAnimate()
+  const { data, isLoading } = useRankingData()
+  
+  // 2. Derived state
+  const guild = data?.guilds[guildName]
+  
+  // 3. Early returns
+  if (isLoading) return <GuildLineupSkeleton />
+  if (!guild) return <EmptyState />
+  
+  // 4. Render
+  return (
+    <div ref={parent}>
+      {/* ... */}
+    </div>
+  )
+}
+
+// ❌ DON'T: Mix logic with JSX
+export function BadComponent() {
+  return (
+    <div>
+      {data && data.guilds && data.guilds[name] ? (
+        data.guilds[name].players.filter(p => p.kills > 0).map(player => (
+          <div>{/* complex logic here */}</div>
+        ))
+      ) : null}
+    </div>
+  )
+}
+```
+
+### File Organization
+```
+/app
+  /page.tsx                    # Dashboard home
+  /guilds/[name]/page.tsx      # Guild detail view
+/components
+  /ui/                         # shadcn components (don't modify)
+  /dashboard/
+    /guild-lineup.tsx          # Main guild display
+    /player-card.tsx           # Individual player
+    /damage-dealers.tsx        # Kills highlight
+    /class-composition.tsx     # Class breakdown
+  /shared/
+    /loading-skeleton.tsx      # Reusable skeletons
+    /empty-state.tsx           # No data states
+/lib
+  /hooks/
+    /use-ranking-data.ts       # SWR data fetching
+    /use-guild-stats.ts        # Derived guild calculations
+  /utils/
+    /calculations.ts           # KD ratio, scores, etc
+    /formatters.ts             # Display formatting
+  /types/
+    /ranking.ts                # All TypeScript interfaces
+/constants
+  /classes.ts                  # Player class definitions
+  /config.ts                   # App config (refresh intervals, etc)
+```
+
+## Naming Conventions
+
+### Files
+- Components: `kebab-case.tsx` (guild-lineup.tsx)
+- Hooks: `use-*.ts` (use-ranking-data.ts)
+- Utils: `kebab-case.ts` (calculations.ts)
+- Types: `kebab-case.ts` (ranking.ts)
+
+### Variables & Functions
+```typescript
+// ✅ DO: Use descriptive names
+const damageCreators = players.filter(isCreatorWithKills)
+const calculateKDRatio = (kills: number, deaths: number) => ...
+
+// ❌ DON'T: Use abbreviations or unclear names
+const dcs = players.filter(p => p.c === 'Creator' && p.k > 0)
+const calc = (k: number, d: number) => ...
+```
+
+### Components
+- PascalCase: `GuildLineup`, `PlayerCard`
+- Descriptive, not generic: `DamageDealers` not `List`
+- Prefix with domain: `GuildLineup` not just `Lineup`
+
+## Data Fetching Pattern
+
+```typescript
+// lib/hooks/use-ranking-data.ts
+'use client'
+
+import useSWR from 'swr'
+import type { RankingResponse } from '@/lib/types/ranking'
+
+const REFRESH_INTERVAL = 5000 // 5 seconds
+
+const fetcher = (url: string) => fetch(url).then(r => r.json())
+
+export function useRankingData() {
+  const { data, error, isLoading, mutate } = useSWR<RankingResponse>(
+    '/api/ranking',
+    fetcher,
+    {
+      refreshInterval: REFRESH_INTERVAL,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+    }
+  )
+  
+  return {
+    data,
+    error,
+    isLoading,
+    refetch: mutate,
+  }
+}
+
+// ❌ DON'T: Fetch directly in components
+export function BadComponent() {
+  const [data, setData] = useState()
+  
+  useEffect(() => {
+    fetch('/api/ranking').then(r => r.json()).then(setData)
+  }, [])
+  
+  return <div>{/* ... */}</div>
+}
+```
+
+## Performance Optimization
+
+### Memoization
+```typescript
+// ✅ DO: Memoize expensive calculations
+const sortedPlayers = useMemo(
+  () => players.sort((a, b) => b.kills - a.kills),
+  [players]
+)
+
+// ✅ DO: Use React.memo for components that re-render often
+export const PlayerCard = React.memo(function PlayerCard({ player }: Props) {
+  return <div>{/* ... */}</div>
+})
+
+// ❌ DON'T: Overuse memoization for simple operations
+const playerName = useMemo(() => player.name, [player]) // Unnecessary
+```
+
+### Animation Performance
+```typescript
+// ✅ DO: Use auto-animate for lists
+const [parent] = useAutoAnimate()
+
+return (
+  <div ref={parent}>
+    {players.map(p => <PlayerCard key={p.name} player={p} />)}
+  </div>
+)
+
+// ❌ DON'T: Animate everything or use heavy libraries
+import { motion } from 'framer-motion' // Too heavy for simple lists
+```
+
+## Error Handling
+
+```typescript
+// ✅ DO: Handle errors gracefully
+export function GuildLineup({ guildName }: Props) {
+  const { data, error, isLoading } = useRankingData()
+  
+  if (error) {
+    return (
+      <div className="p-4 border border-red-500 rounded">
+        <p>Failed to load guild data</p>
+        <button onClick={() => window.location.reload()}>Retry</button>
+      </div>
+    )
+  }
+  
+  if (isLoading) return <Skeleton />
+  if (!data?.guilds[guildName]) return <EmptyState />
+  
+  return <div>{/* ... */}</div>
+}
+
+// ❌ DON'T: Ignore errors or show raw messages
+export function BadComponent() {
+  const { data } = useRankingData()
+  return <div>{data.guilds.map(...)}</div> // Will crash if data is undefined
+}
+```
+
+## Tailwind CSS Patterns
+
+```typescript
+// ✅ DO: Use Tailwind utilities, keep classes readable
+<div className="flex items-center gap-3 p-4 rounded-lg border bg-card">
+
+// ✅ DO: Use cn() helper for conditional classes
+import { cn } from '@/lib/utils'
+
+<div className={cn(
+  "p-4 rounded border",
+  isHighlighted && "border-yellow-500 bg-yellow-50",
+  hasKills && "font-bold"
+)}>
+
+// ❌ DON'T: Use inline styles or create custom CSS
+<div style={{ display: 'flex', padding: '16px' }}> // Use Tailwind instead
+```
+
+## Type Safety Rules
+
+```typescript
+// ✅ DO: Parse API strings to numbers immediately
+interface RawPlayer {
+  kills: string
+  deaths: string
+  score: string
+}
+
+function parsePlayer(raw: RawPlayer): Player {
+  return {
+    ...raw,
+    kills: parseInt(raw.kills, 10),
+    deaths: parseInt(raw.deaths, 10),
+    score: parseInt(raw.score, 10),
+  }
+}
+
+// ✅ DO: Use discriminated unions for variants
+type PlayerStatus = 
+  | { type: 'active'; lastSeen: Date }
+  | { type: 'inactive'; reason: string }
+
+// ❌ DON'T: Use string literals everywhere
+const kills = player.kills // string - will cause issues in calculations
+```
+
+## Testing Approach
+
+```typescript
+// ✅ DO: Write tests for business logic
+// lib/utils/calculations.test.ts
+import { calculateKDRatio } from './calculations'
+
+describe('calculateKDRatio', () => {
+  it('returns Infinity for zero deaths', () => {
+    expect(calculateKDRatio(10, 0)).toBe(Infinity)
+  })
+  
+  it('calculates ratio correctly', () => {
+    expect(calculateKDRatio(10, 5)).toBe(2)
+  })
+})
+
+// ❌ DON'T: Test implementation details or UI
+// Don't test that a component renders a specific className
+```
+
+## Code Review Checklist
+
+Before committing, ensure:
+- [ ] No TypeScript `any` types used
+- [ ] All components have explicit prop types
+- [ ] Repeated code extracted to utils/hooks
+- [ ] Components have single responsibility
+- [ ] Error states handled gracefully
+- [ ] Loading states show skeletons
+- [ ] No console.logs in production code
+- [ ] Tailwind classes used (no inline styles)
+- [ ] File is in correct directory
+- [ ] Imports organized (React → Third-party → Local)
+
+## Common Patterns
+
+### Guild Statistics
+```typescript
+// lib/hooks/use-guild-stats.ts
+export function useGuildStats(guildName: string) {
+  const { data } = useRankingData()
+  
+  return useMemo(() => {
+    const guild = data?.guilds[guildName]
+    if (!guild) return null
+    
+    return {
+      totalKills: guild.players.reduce((sum, p) => sum + p.kills, 0),
+      damageCreators: guild.players.filter(
+        p => p.class === 'Creator' && p.kills > 0
+      ),
+      classDistribution: guild.class_count,
+    }
+  }, [data, guildName])
+}
+```
+
+### Data Transformations
+```typescript
+// lib/utils/transformers.ts
+export function groupPlayersByClass(players: Player[]) {
+  return players.reduce((acc, player) => {
+    if (!acc[player.class]) acc[player.class] = []
+    acc[player.class].push(player)
+    return acc
+  }, {} as Record<PlayerClass, Player[]>)
+}
+```
+
+## AI Assistant Instructions
+
+When I ask you to create components or features:
+1. Follow this .cursorrules file strictly
+2. Ask clarifying questions if requirements are unclear
+3. Suggest improvements if you see violations of SOLID/DRY/KISS
+4. Provide TypeScript types for all functions and components
+5. Include error handling and loading states
+6. Use shadcn/ui components when available
+7. Keep components under 150 lines (extract if longer)
+8. Prioritize readability over cleverness
+
+## Don'ts - Common Anti-patterns
+
+❌ **Don't** create god components (do everything)
+❌ **Don't** use `useEffect` for data fetching (use SWR)
+❌ **Don't** mutate props or state directly
+❌ **Don't** use index as key in lists with dynamic data
+❌ **Don't** create custom CSS files (use Tailwind)
+❌ **Don't** install libraries without discussing first
+❌ **Don't** commit commented-out code
+❌ **Don't** use `@ts-ignore` or `@ts-nocheck`
+
+## Project-Specific Notes
+
+- API endpoint returns data every 5-10 seconds
+- Player names are unique identifiers (use as keys)
+- Kills > 0 indicates damage dealers (important for Creator class)
+- Guild lineup should show class composition in order
+- Real-time updates should be smooth (use auto-animate)
+- Dashboard should handle 60+ players without lag
